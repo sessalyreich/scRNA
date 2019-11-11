@@ -1,0 +1,235 @@
+#Seurat V3 workflow overview for a single sample or pre-integrated saples
+scrna.counts <- Read10X(data.dir = "/yourpath/outs/filtered_feature_bc_matrix") #picky
+scrna <- CreateSeuratObject(counts = scrna.counts)
+scrna <- SCTransform(scrna) # Find variable genes, scale, and normalize
+scrna <- NormalizeData(object = scrna) # older pipeline
+scrna <- FindVariableFeatures(object = scrna) # older pipeline
+scrna <- ScaleData(object = scrna) # older pipeline
+scrna <- RunPCA(object = scrna) # Principal Component Analysis
+scrna <- FindNeighbors(object = scrna)
+scrna <- FindClusters(object = scrna)
+scrna <- RunTSNE(object = scrna)
+scrna <- RunUMAP(object = scrna)
+DimPlot(object = scrna, reduction = "tsne")
+UMAPPlot(object = scrna)
+
+#R help can type ?FunctionName
+#code available https://github.com/satijalab/seurat/blob/master/man/FindClusters.Rd
+
+#Read data, create a Seurat object, and perform initial filter
+scrna.counts <- Read10X(data.dir = "/yourpath/outs/filtered_feature_bc_matrix")
+scrna <- CreateSeuratObject(counts = scrna.counts, min.cells = 10, min.features = 100, project = Project1)
+
+#multiplexed version of above - read, filter, and merge an arbitrary number of samples into a single Seurat object
+# matrix.dirs is a list of directories containing 10x data
+data.10x = list(); # a list of 10x data objects
+for (i in 1:nsamples) { # nsamples = number of samples
+  data.10x[[i]] <- Read10X(data.dir = matrix.dirs[i]);
+}
+scrna.list = list(); # a list of Seurat objects
+for (i in 1:length(data.10x)) {
+  scrna.list[[i]] = CreateSeuratObject(counts = data.10x[[i]], min.cells=10, min.features=100, project=Project1);
+  scrna.list[[i]][["Batch"]] = batch[i]; # optional: assign a batch label from a vector ‘batch’
+  scrna.list[[i]][["Sample"]] = samples[i]; # optional: assign a sample name from a vector ‘samples’
+}
+scrna <- merge(x=scrna.list[[1]], y=c(scrna.list[[2]],scrna.list[[3]], add.cell.ids = c(”name1",”name2",”name3”…)) # create merged Seurat object
+
+#batch correct/integrate instead of merging - because batches are just additional reads to the same sample
+# matrix.dirs is a list of directories containing 10x data
+data.10x = list(); # declare list of 10x data sets
+for (i in 1:length(matrix.dirs.)) { # for each data set
+  data.10x[[i]] <- Read10X(data.dir = matrix.dirs[i]); # add it to the list
+}
+scrna.list = list(); # declare list of Seurat objects
+for (i in 1:length(data.10x)) { # for each data set…
+  scrna.list[[i]] = CreateSeuratObject(counts = data.10x[[i]], min.cells=10, min.features=100,project=batch[i]); # …create a Seurat object for each data set
+  scrna.list[[i]][["Batch"]] = batch[i]; # assign a batch label from ‘batch’
+  scrna.list[[i]][["Sample"]] = samples[i]; # assign a sample name from ‘samples’
+}
+anchors <- FindIntegrationAnchors(object.list = scrna.list, dims = 1:30) # find anchors
+scrna.int <- IntegrateData(anchorset = anchors, dims = 1:30) # Integrate data
+DefaultAssay(object = scrna.int) <- "integrated” # make integrated data the default for downstream analyses
+
+#sample R and Seurat code for parameter plots
+#NB: the number of genes and UMIs (nGene and nUMI) are automatically calculated for every object in Seurat and stored in teh metadata
+
+# Calculate percentage of mitochondrial genes
+mito.genes <- grep(pattern = "^MT-", x = rownames(x = scrna), value = TRUE);
+percent.mito <- Matrix::colSums(x = GetAssayData(object = scrna, slot = 'counts')[mito.genes, ]) / Matrix::colSums(x = GetAssayData(object = scrna, slot = 'counts'));
+scrna[['percent.mito']] <- percent.mito; # assign it to the meta data
+
+# ribosomal genes
+ribo.genes <- grep(pattern = "^RP[SL][[:digit:]]", x = rownames(x = scrna), value = TRUE);
+percent.ribo <- Matrix::colSums(x = GetAssayData(object = scrna, slot = 'counts')[ribo.genes, ]) / Matrix::colSums(x = GetAssayData(object = scrna, slot = 'counts'));
+scrna[['percent.ribo']] <- percent.ribo; # assign it to the meta data
+
+vln <- VlnPlot(object = scrna, features = c("percent.mito", "percent.ribo"), pt.size=0, ncol = 2, group.by="Batch"); # make a violin plot, and color by batch or sample
+
+vln <- VlnPlot(object = scrna, features = "nCount_RNA", pt.size=0, group.by="Batch", y.max=25000)
+
+vln <- VlnPlot(object = scrna, features = "nFeature_RNA", pt.size=0, group.by="Batch")
+
+#filter data - remove cells with high mitochondrial content (dead), too many genes (contaminated by rna from ruptured cells), too few genes (no actual cell just contamination)
+#can use your plots from previous slides to choose approrpiate thresholds - examples are nFeature_RNA between 200 and 400, or between 200 and 95th percentile; nFeature > x, nUMI <93rd %ile; mitorchondrial content below 5-10%; ribosomal content below 50%
+scrna <- subset(x = scrna, subset = nFeature_RNA > 200 & nFeature_RNA < Feature95 & percent.mito < mc.hi)
+
+#you can calculate phase of cell cycle because this can dominate the tSNE/UMAP plots and may need to be removed
+#SEurat has a builtin function that calculates relative expression level in G1/S and G2/M genes (defined in paper Tirosh et al 2016)
+cell.cycle.tirosh <- read.table("CellCycleTirosh.txt", sep='\t', header=FALSE);
+s.genes = cell.cycle.tirosh$V2[which(cell.cycle.tirosh$V1 == "G1/S")];
+g2m.genes = cell.cycle.tirosh$V2[which(cell.cycle.tirosh$V1 == "G2/M")];
+scrna <- CellCycleScoring(object=scrna, s.features=s.genes, g2m.features=g2m.genes, set.ident=FALSE)
+
+#SCTransform normalization/scaling function
+# SCTransform (with removal of cell cycle signal):
+scrna <- SCTransform(scrna, vars.to.regress = c("S.Score", "G2M.Score"), verbose=FALSE)
+# Note that this replaces the three separate steps implemented in older workflows:
+scrna <- NormalizeData(object = scrna, normalization.method = "LogNormalize", scale.factor = 1e4) # feature counts divided by total, multiplied by scale factor, add 1, ln-transformed
+scrna <- FindVariableFeatures(object = scrna, selection.method = 'vst', mean.cutoff = c(0.1,8), dispersion.cutoff = c(1, Inf)) # designed to find ~2000 variable genes
+scrna <- ScaleData(object = scrna, features = rownames(x = scrna), vars.to.regress = c("S.Score","G2M.Score"), display.progress=FALSE) # center and regress out unwanted variation
+
+#selecting PCs created to reduce dimensionality, example of this is jackstraw analysis which is really slow. there are other ways too. compares real and random pcs to derive significance
+# NB: jackstraw analysis is slow
+scrna <- JackStraw(object = scrna, num.replicate = 100, dims=N) # specify N: 30, 50, etc
+scrna <- ScoreJackStraw(object = scrna, dims = 1:50)
+js <- JackStrawPlot(object = scrna, dims = 1:20) # make plot shown above
+pc.pval <- scrna@reductions$pca@jackstraw@overall.p.values # get overall pvalues for each PC
+
+#characterizing clusters using differential gene expression 
+DEGs <- FindAllMarkers(object=scrna); # Compare each clusters to all other cells. output is a matrix.
+de.markers <- FindMarkers(scrna, ident.1 = ”1", ident.2 = ”2") # compare identity 1 to identity 2
+# NB: May first need to set default identities, e.g.:
+Idents(object = scrna) <- ”seurat_clusters”; # sets the default identity to Seurat_clusters
+
+# Do the DEGs make sense? Plot them
+FeaturePlot(object = scrna, features = ‘CD34’)
+# Prettier version:
+FeaturePlot(object = scrna, features = genesToPlot, cols = c("gray","red"), ncol=2, reduction = "umap") + theme(axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x=element_blank(),axis.text.y=element_blank(),axis.ticks.x=element_blank(),axis.ticks.y=element_blank())
+
+#EXERCISE
+
+setwd('~/Desktop/scRNA_data')
+
+library("Seurat");
+library("dplyr");
+library("RColorBrewer");
+library("ggthemes");
+library("ggplot2");
+library("cowplot");
+
+scrna <- readRDS("869586R.rds")
+
+#This is how to access the metadata for the data set such as summary statistics, cluster membership, etcs
+scrna@meta.data
+
+#how many UMIs in each cell
+head(scrna@meta.data$nCount_RNA)
+
+#items in the current default cell identity class
+levels(x=scrna)
+
+#how many clusters are there?
+length(unique(scrna@meta.data$seurat_clusters))
+levels(x=scrna)
+
+#what batches are included in this data set - batches are if you sequence once, but want more depth, so you sequence again with the sample and end up with 2 batches
+unique(scrna@meta.data$Batch)
+
+#Assay data means what type of data youre working with (such as RNA, exome, ataq seq, etc)
+#Assay = data type, and each assay has multiple slots to hold different types or transformations/modifications of your data, like raw data ('counts'), scaled data ('scale.data'), or normalized data ('data')
+#It’s often important to know what ‘slot’ a function is using. Sometimes you can change it.
+
+#raw RNA counts: (if no counts, it shows up as a . )
+scrna[['RNA']]@counts[1:3,1:3]
+
+#scaled data after SCTransform:
+scrna[['SCT']]@scale.data[1:3,1:3]
+
+#Corected UMI count data after SCTransform:
+scrna[['SCT']]@counts[1:3,1:3]
+
+#Log normalized data after SCTransform:
+scrna[['SCT']]@data[1:3,1:3]
+
+#Can also use teh GetASsayData to get the scaled data or counts
+GetAssayData(object = scrna, slot = 'scale.data')[1:3, 1:3]
+GetAssayData(object = scrna, slot = 'counts')[1:3, 1:3]
+
+#To change your slot to dimensionality reduction data (PCA, tSNE, UMAP data)
+scrna[['pca']]
+scrna[['tsne']]
+scrna[['umap']]
+
+#Common functions for Seurat object
+GetAssayData(object = scrna, slot = "counts") 
+GetAssayData(object = scrna, slot = "scale.data")
+FetchData(object = scrna) # returns a data frame
+colnames(x = scrna)
+rownames(x = scrna)
+VariableFeatures(object = scrna)
+HVFInfo(object = scrna)
+scrna[["assay.name"]] eg scrna[[“RNA”]]
+scrna[["pca"]]
+Embeddings(object = scrna, reduction = "pca")
+Loadings(object = scrna, reduction = "pca")
+scrna$name <- vector # assign a vector of identities
+scrna$name # e.g. scrna$seurat_clusters
+Idents(object = scrna) # get default cell identities
+Idents(object = scrna) <- "new.idents” # change the identities
+Idents(object = scrna, cells = 1:10) <- "new.idents” # change the identities for specific cells
+scrna$saved.idents <- Idents(object = scrna) # change current identities for an existing identity class
+levels(x = scrna) # get a list of the default identities (e.g. a list of clusters)
+RenameIdents(object = scrna, "old.ident" = "new.ident") # change name of identity classes
+WhichCells(object = scrna, idents = "ident.keep") # which cells are in cluster x?
+WhichCells(object = scrna, idents = "ident.remove", invert = TRUE)
+WhichCells(object = scrna, downsample = 500)
+WhichCells(object = scrna, expression = name > low & name < high)
+subset(x = scrna, subset = name > low & name < high)
+subset(x = scrna, subset = name > low & name < high)
+merge(x = object1, y = object2)
+
+#additional strategies for accessing data
+Cells(scrna) # get list of cells
+# choose cells that have a given characteristic, here, that are in “sample1”:
+subcells <- Cells(scrna)[(which(scrna[["Sample"]]$Sample == sample1))]
+# alternative approach, choosing cells in cluster 4:
+Idents(object=scrna) <- "ClusterNames” # set default identity to ClusterNames
+	WhichCells(scrna,idents="4") # use WhichCells
+# extract raw expression matrix for all cells in cluster 4
+	 as.matrix(GetAssayData(scrna, slot = "counts")[, WhichCells(scrna, ident = '4')])
+FetchData # subset Seurat object and return a data frame
+subset # subset Seurat object and return a Seurat object
+levels(scrna) # reorder the columns in Do.Heatmap
+
+#printing plots to files - Many Seurat plots are ggplot objects. To print them to a file you must explicitly call the print command (e.g. ‘print(plot)’)
+# example:
+jpeg(sprintf("%s/UMAP.10.%s.jpg", outdir, date), width = 10, height = 8, units="in",res=300);
+p1 <- DimPlot(object = scrna, reduction = "tsne", group.by = "DataSet", pt.size=0.1)
+p2 <- DimPlot(object = scrna, reduction = "umap", group.by = "DataSet", pt.size=0.1)
+print(plot_grid(p1, p2));
+
+#plotting functions
+VlnPlot # for diagnostics
+FeatureScatter # for diagnostics
+DimPlot # for PCA, UMAP, or tSNE
+UMAPPlot
+PCAPlot
+DimHeatmap # plot heatmap of top genes in given set of, eg, principle components
+ElbowPlot # for PCA selection
+JackStrawPlot # for PCA selection
+Do.Heatmap # plot a heatmap of all cells, subsampling
+* heatmap.2 in R is also useful
+
+#Plotting using t-SNE/UMAP
+#n = 10; choose number of dimensions - experiment-specific!
+scrna <- RunUMAP(object = scrna, reduction = "pca", dims = 1:n) # calculate UMAP
+scrna <- RunTSNE(object = scrna, reduction = "pca", dims = 1:n) # calculate tSNE
+
+# now that you've calculated you have to actually print the plot(s):
+DimPlot(object = scrna, reduction = "tsne", group.by = ”Batch", pt.size=0.1) # color by Batch
+FeaturePlot(object = scrna, features = c("nCount_RNA"), reduction="tsne") # plot one or more genes or variable on t-SNE
+
+#examples
+DimPlot(object = scrna, reduction = "umap", group.by = "orig.ident", pt.size=0.1)
+DimPlot(object = scrna, reduction = "tsne", group.by = "orig.ident", pt.size=0.1)
+DimPlot(object = scrna, reduction = "tsne", group.by = "Phase", pt.size=0.1)
