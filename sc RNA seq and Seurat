@@ -26,26 +26,40 @@ data.10x = list(); # a list of 10x data objects
 for (i in 1:nsamples) { # nsamples = number of samples
   data.10x[[i]] <- Read10X(data.dir = matrix.dirs[i]);
 }
+#since using only 3 in exercise you don't need to do the loop above
+> data.10x = list()
+> data.10x[[1]] <- Read10X(data.dir = "ND050119_CD34_3pV3/filtered_feature_bc_matrix")
+> data.10x[[2]] <- Read10X(data.dir = "ND050119_WBM_3pV3/filtered_feature_bc_matrix")
+> data.10x[[3]] <- Read10X(data.dir = "ND050819_WBM_3pV3/filtered_feature_bc_matrix")
+
 scrna.list = list(); # a list of Seurat objects
 for (i in 1:length(data.10x)) {
   scrna.list[[i]] = CreateSeuratObject(counts = data.10x[[i]], min.cells=10, min.features=100, project=Project1);
   scrna.list[[i]][["Batch"]] = batch[i]; # optional: assign a batch label from a vector ‘batch’
   scrna.list[[i]][["Sample"]] = samples[i]; # optional: assign a sample name from a vector ‘samples’
 }
-scrna <- merge(x=scrna.list[[1]], y=c(scrna.list[[2]],scrna.list[[3]], add.cell.ids = c(”name1",”name2",”name3”…)) # create merged Seurat object
+
+#actual code is as follows
+samples = c("A","B","C")
+for (i in 1:length(data.10x)) {
+  scrna.list[[i]] = CreateSeuratObject(counts = data.10x[[i]], min.cells=10, min.features=100, project="Project1");
+  scrna.list[[i]][["Sample"]] = samples[i];
+}
+
+scrna <- merge(x=scrna.list[[1]], y=c(scrna.list[[2]],scrna.list[[3]]), add.cell.ids = c(”name1",”name2",”name3”…)) # create merged Seurat object
+
+#actual code is as below
+scrna <- merge(x=scrna.list[[1]], y=c(scrna.list[[2]],scrna.list[[3]]), add.cell.ids = c("A","B","C"))
 
 #batch correct/integrate instead of merging - because batches are just additional reads to the same sample
+#we don't need to do this for the exercise because we didn't do the optional batching
 # matrix.dirs is a list of directories containing 10x data
 data.10x = list(); # declare list of 10x data sets
 for (i in 1:length(matrix.dirs.)) { # for each data set
   data.10x[[i]] <- Read10X(data.dir = matrix.dirs[i]); # add it to the list
 }
-scrna.list = list(); # declare list of Seurat objects
-for (i in 1:length(data.10x)) { # for each data set…
-  scrna.list[[i]] = CreateSeuratObject(counts = data.10x[[i]], min.cells=10, min.features=100,project=batch[i]); # …create a Seurat object for each data set
-  scrna.list[[i]][["Batch"]] = batch[i]; # assign a batch label from ‘batch’
-  scrna.list[[i]][["Sample"]] = samples[i]; # assign a sample name from ‘samples’
-}
+
+#anchors is for data of different types - don't need to integrate in exercise because we merged
 anchors <- FindIntegrationAnchors(object.list = scrna.list, dims = 1:30) # find anchors
 scrna.int <- IntegrateData(anchorset = anchors, dims = 1:30) # Integrate data
 DefaultAssay(object = scrna.int) <- "integrated” # make integrated data the default for downstream analyses
@@ -64,14 +78,25 @@ percent.ribo <- Matrix::colSums(x = GetAssayData(object = scrna, slot = 'counts'
 scrna[['percent.ribo']] <- percent.ribo; # assign it to the meta data
 
 vln <- VlnPlot(object = scrna, features = c("percent.mito", "percent.ribo"), pt.size=0, ncol = 2, group.by="Batch"); # make a violin plot, and color by batch or sample
-
-vln <- VlnPlot(object = scrna, features = "nCount_RNA", pt.size=0, group.by="Batch", y.max=25000)
-
 vln <- VlnPlot(object = scrna, features = "nFeature_RNA", pt.size=0, group.by="Batch")
+
+#for us for the actual code in the practice exercise, we need to group by sample rather than batch, so change Batch to Sample
+vln <- VlnPlot(object = scrna, features = c("percent.mito", "percent.ribo"), pt.size=0, ncol = 2, group.by="Sample")
+vln <- VlnPlot(object = scrna, features = "nCount_RNA", pt.size=0, group.by="Sample", y.max=25000)
+
+#For some reason R wasn't working to make the violin plot show up in plots, so print to file instead
+vln <- VlnPlot(object = scrna, features = "nCount_RNA", pt.size=0, group.by="Sample", y.max=25000)
+pdf(file = "vlnnCountRNA")
+print(vln)
+dev.off()
+
 
 #filter data - remove cells with high mitochondrial content (dead), too many genes (contaminated by rna from ruptured cells), too few genes (no actual cell just contamination)
 #can use your plots from previous slides to choose approrpiate thresholds - examples are nFeature_RNA between 200 and 400, or between 200 and 95th percentile; nFeature > x, nUMI <93rd %ile; mitorchondrial content below 5-10%; ribosomal content below 50%
 scrna <- subset(x = scrna, subset = nFeature_RNA > 200 & nFeature_RNA < Feature95 & percent.mito < mc.hi)
+
+#actual code specifying you want to remove cells with <200 transcripts and more than 4000, and percent mitochondrial over 90% and percent ribosomal over 50%
+scrna <- subset(x = scrna, subset = nFeature_RNA > 200 & nFeature_RNA < 4000 & percent.mito < 0.1 & percent.ribo < 0.5)
 
 #you can calculate phase of cell cycle because this can dominate the tSNE/UMAP plots and may need to be removed
 #SEurat has a builtin function that calculates relative expression level in G1/S and G2/M genes (defined in paper Tirosh et al 2016)
@@ -88,12 +113,70 @@ scrna <- NormalizeData(object = scrna, normalization.method = "LogNormalize", sc
 scrna <- FindVariableFeatures(object = scrna, selection.method = 'vst', mean.cutoff = c(0.1,8), dispersion.cutoff = c(1, Inf)) # designed to find ~2000 variable genes
 scrna <- ScaleData(object = scrna, features = rownames(x = scrna), vars.to.regress = c("S.Score","G2M.Score"), display.progress=FALSE) # center and regress out unwanted variation
 
+#now you need to run you PCAs
+scrna <- RunPCA(object = scrna), can change the parameters of this if you want, the default is to run 50 and display 5 of them
+
 #selecting PCs created to reduce dimensionality, example of this is jackstraw analysis which is really slow. there are other ways too. compares real and random pcs to derive significance
 # NB: jackstraw analysis is slow
 scrna <- JackStraw(object = scrna, num.replicate = 100, dims=N) # specify N: 30, 50, etc
 scrna <- ScoreJackStraw(object = scrna, dims = 1:50)
 js <- JackStrawPlot(object = scrna, dims = 1:20) # make plot shown above
 pc.pval <- scrna@reductions$pca@jackstraw@overall.p.values # get overall pvalues for each PC
+
+scrna <- FindNeighbors(object = scrna)
+scrna <- FindClusters(object = scrna)
+scrna <- RunTSNE(object = scrna)
+scrna <- RunUMAP(object = scrna)
+DimPlot(object = scrna, reduction = "tsne")
+UMAPPlot(object = scrna)
+
+#plotting functions
+VlnPlot # for diagnostics
+FeatureScatter # for diagnostics
+DimPlot # for PCA, UMAP, or tSNE
+UMAPPlot
+PCAPlot
+DimHeatmap # plot heatmap of top genes in given set of, eg, principle components
+ElbowPlot # for PCA selection
+JackStrawPlot # for PCA selection
+DoHeatmap # plot a heatmap of all cells, subsampling
+* heatmap.2 in R is also useful
+
+#Plotting using t-SNE/UMAP
+#n = 10; choose number of dimensions - experiment-specific!
+scrna <- RunUMAP(object = scrna, reduction = "pca", dims = 1:n) # calculate UMAP
+scrna <- RunTSNE(object = scrna) # calculate tSNE
+DimPlot(object = scrna, reduction = "tsne")
+
+# now that you've calculated you have to actually print the plot(s):
+DimPlot(object = scrna, reduction = "tsne", group.by = ”Batch", pt.size=0.1) # color by Batch
+
+#examples - in the exercise we didn't group by batch or anything, these are just random examples from her ppt
+DimPlot(object = scrna, reduction = "umap", group.by = "orig.ident", pt.size=0.1)
+DimPlot(object = scrna, reduction = "tsne", group.by = "orig.ident", pt.size=0.1)
+DimPlot(object = scrna, reduction = "tsne", group.by = "Phase", pt.size=0.1)
+FeaturePlot(object = scrna, features = c("nCount_RNA"), reduction="tsne") # plot one or more genes or variable on t-SNE
+
+#again, my R studio is not working properly, so it won't display my plots. I can make a jpeg or pdf or something to see it instead
+tsne1 <- DimPlot(object = scrna, reduction = "tsne") #assign my dimplot to a variable
+jpeg(file = "tsne1.jpg") #open a jpeg and name it
+print(tsne1) #print tsne1 to the jpeg you just made
+dev.off() #close out the jpeg so you can view it
+
+#to make tsne by sample
+> DimPlot(object = scrna, reduction = "tsne", group.by = "Sample", pt.size=0.1)
+> tsnebysample <- DimPlot(object = scrna, reduction = "tsne", group.by = "Sample", pt.size=0.1)
+> jpeg(file = "tsnebysample.jpg")
+> print(tsnebysample)
+> dev.off()
+
+#to make an elbow plot
+> ElbowPlot(scrna, ndims=20, reduction="pca")
+> elbowplot <- ElbowPlot(scrna, ndims=20, reduction="pca")
+> jpeg(file = "elbowplot.jpg")
+> print(elbowplot)
+> dev.off
+
 
 #characterizing clusters using differential gene expression 
 DEGs <- FindAllMarkers(object=scrna); # Compare each clusters to all other cells. output is a matrix.
@@ -105,6 +188,13 @@ Idents(object = scrna) <- ”seurat_clusters”; # sets the default identity to 
 FeaturePlot(object = scrna, features = ‘CD34’)
 # Prettier version:
 FeaturePlot(object = scrna, features = genesToPlot, cols = c("gray","red"), ncol=2, reduction = "umap") + theme(axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x=element_blank(),axis.text.y=element_blank(),axis.ticks.x=element_blank(),axis.ticks.y=element_blank())
+
+
+#to make a heatmap for example between differentially expression genes. top.genes is a variable Allegra created previously of her top differentially expressed genes, she used her scaled data hence the slot, she wanted to group by sample (or could do batch, etc), she wanted a group bar to signal the groups. the disp min and max are just preferences on how you want the heatmap to look
+DoHeatmap(mini, features=top.genes, slot=scale.data, disp.min=1, disp.max=1, group.by="Sample", group.bar=TRUE)
+
+
+
 
 #EXERCISE
 
@@ -259,104 +349,5 @@ vln <- VlnPlot(object = scrna, features = c("percent.mito", "percent.ribo"), pt.
 jpeg(vln)
 
 
-#corrected cell cycle data for course exercise CellCycleTirosh.txt
-G1/S    MCM5
-G1/S    PCNA
-G1/S    TYMS
-G1/S    FEN1
-G1/S    MCM2
-G1/S    MCM4
-G1/S    RRM1
-G1/S    UNG
-G1/S    GINS2
-G1/S    MCM6
-G1/S    CDCA7
-G1/S    DTL
-G1/S    PRIM1
-G1/S    UHRF1
-G1/S    MLF1IP
-G1/S    HELLS
-G1/S    RFC2
-G1/S    RPA2
-G1/S    NASP
-G1/S    RAD51AP1
-G1/S    GMNN
-G1/S    WDR76
-G1/S    SLBP
-G1/S    CCNE2
-G1/S    UBR7
-G1/S    POLD3
-G1/S    MSH2
-G1/S    ATAD2
-G1/S    RAD51
-G1/S    RRM2
-G1/S    CDC45
-G1/S    CDC6
-G1/S    EXO1
-G1/S    TIPIN
-G1/S    DSCC1
-G1/S    BLM
-G1/S    CASP8AP2
-G1/S    USP1
-G1/S    CLSPN
-G1/S    POLA1
-G1/S    CHAF1B
-G1/S    BRIP1
-G1/S    E2F8
-G2/M    HMGB2
-G2/M    CDK1
-G2/M    NUSAP1
-G2/M    UBE2C
-G2/M    BIRC5
-G2/M    TPX2
-G2/M    TOP2A
-G2/M    NDC80
-G2/M    CKS2
-G2/M    NUF2
-G2/M    CKS1B
-G2/M    MKI67
-G2/M    TMPO
-G2/M    CENPF
-G2/M    TACC3
-G2/M    FAM64A
-G2/M    SMC4
-G2/M    CCNB2
-G2/M    CKAP2L
-G2/M    CKAP2
-G2/M    AURKB
-G2/M    BUB1
-G2/M    KIF11
-G2/M    ANP32E
-G2/M    TUBB4B
-G2/M    GTSE1
-G2/M    KIF20B
-G2/M    HJURP
-G2/M    HJURP
-G2/M    CDCA3
-G2/M    HN1
-G2/M    CDC20
-G2/M    TTK
-G2/M    CDC25C
-G2/M    KIF2C
-G2/M    RANGAP1
-G2/M    NCAPD2
-G2/M    DLGAP5
-G2/M    CDCA2
-G2/M    CDCA8
-G2/M    ECT2
-G2/M    KIF23
-G2/M    HMMR
-G2/M    AURKA
-G2/M    PSRC1
-G2/M    ANLN
-G2/M    LBR
-G2/M    CKAP5
-G2/M    CENPE
-G2/M    CTCF
-G2/M    NEK2
-G2/M    G2E3
-G2/M    GAS2L3
-G2/M    CBX5
-G2/M    CENPA
 
 
