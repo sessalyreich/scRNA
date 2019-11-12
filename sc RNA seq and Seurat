@@ -191,7 +191,8 @@ FeaturePlot(object = scrna, features = genesToPlot, cols = c("gray","red"), ncol
 
 
 #to make a heatmap for example between differentially expression genes. top.genes is a variable Allegra created previously of her top differentially expressed genes, she used her scaled data hence the slot, she wanted to group by sample (or could do batch, etc), she wanted a group bar to signal the groups. the disp min and max are just preferences on how you want the heatmap to look
-DoHeatmap(mini, features=top.genes, slot=scale.data, disp.min=1, disp.max=1, group.by="Sample", group.bar=TRUE)
+top.genes <- DEGs$gene[1:20] #this is for top 20 of the differentially expressed genes found in the variable previous made DEGs
+DoHeatmap(mini, features=top.genes, group.by="Sample", group.bar=TRUE)
 
 
 
