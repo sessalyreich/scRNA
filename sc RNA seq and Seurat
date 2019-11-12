@@ -233,3 +233,27 @@ FeaturePlot(object = scrna, features = c("nCount_RNA"), reduction="tsne") # plot
 DimPlot(object = scrna, reduction = "umap", group.by = "orig.ident", pt.size=0.1)
 DimPlot(object = scrna, reduction = "tsne", group.by = "orig.ident", pt.size=0.1)
 DimPlot(object = scrna, reduction = "tsne", group.by = "Phase", pt.size=0.1)
+
+
+#how many batches are there and what are their names - this is obtained from the metadata 
+length(unique(scrna@meta.data$Batch))  #this tells you how many there are
+unique(scrna@meta.data$Batch)   #this tells you the names of the batches
+
+
+#determine the total number of cells in the whole thing
+summary(Cells(scrna))
+   Length     Class      Mode 
+     4709 character character 
+
+#determine the number of cells in each batch
+> length(grep(pattern = "^869586_R_2", x = Cells(scrna), value = TRUE))
+[1] 2239
+> length(grep(pattern = "^869586_R_PB", x = Cells(scrna), value = TRUE))
+[1] 2470
+
+#make the violin plots
+VlnPlot(object = scrna, features = c("percent.mito", "percent.ribo"), pt.size=0, ncol = 2, group.by="Batch")
+#write the violin plot as a variable aka define the variable vln
+vln <- VlnPlot(object = scrna, features = c("percent.mito", "percent.ribo"), pt.size=0, ncol = 2, group.by="Batch")
+#then need to make the jpeg
+jpeg(vln)
